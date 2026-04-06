@@ -1,0 +1,300 @@
+<!DOCTYPE html>
+<html>
+<head>
+<meta charset="UTF-8">
+<title>Cashflow Dashboard</title>
+<style>
+*{box-sizing:border-box;margin:0;padding:0}
+body{font-family:Arial,sans-serif;padding:20px;background:#fff;color:#222}
+h1{font-size:20px;font-weight:600;margin-bottom:6px}
+.sub{font-size:13px;color:#666;margin-bottom:20px}
+.btn{padding:8px 16px;font-size:13px;border:1px solid #ccc;border-radius:6px;cursor:pointer;background:#fff;margin-right:6px}
+.btn:hover{background:#f5f5f5}
+.status{font-size:12px;margin-top:8px;margin-bottom:16px;min-height:16px}
+.ok{color:green}.err{color:red}
+.metrics{display:grid;grid-template-columns:repeat(4,1fr);gap:10px;margin-bottom:20px}
+.metric{background:#f5f5f5;border-radius:8px;padding:14px}
+.metric-label{font-size:11px;color:#666;margin-bottom:6px}
+.metric-value{font-size:20px;font-weight:600}
+.pos{color:#1a7a50}.neg{color:#c0392b}
+.tabs{display:flex;gap:4px;border-bottom:1px solid #ddd;margin-bottom:16px}
+.tab{padding:8px 16px;font-size:13px;cursor:pointer;color:#666;border-bottom:2px solid transparent;margin-bottom:-1px}
+.tab.active{color:#222;border-bottom:2px solid #222;font-weight:600}
+.card{border:1px solid #ddd;border-radius:8px;padding:16px;margin-bottom:12px;overflow-x:auto}
+table{width:100%;border-collapse:collapse;font-size:12px}
+th{font-size:11px;color:#666;text-align:right;padding:6px 10px;border-bottom:1px solid #ddd;font-weight:600}
+th:first-child{text-align:left}
+td{padding:7px 10px;border-bottom:1px solid #eee;text-align:right}
+td:first-child{text-align:left;color:#444}
+tr.section-row td{font-weight:600;background:#f9f9f9;font-size:11px;text-transform:uppercase;color:#222}
+tr.surplus-row td{font-weight:600;border-top:2px solid #ddd}
+tr:hover td{background:#fafafa}
+.chart-wrap{position:relative;width:100%;height:260px;margin-bottom:10px}
+.bar-row{display:flex;align-items:center;gap:8px;margin-bottom:6px}
+.bar-label{font-size:12px;color:#666;width:200px;flex-shrink:0;text-align:right;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.bar-track{flex:1;background:#f0f0f0;border-radius:3px;height:14px;overflow:hidden}
+.bar-fill{height:100%;border-radius:3px}
+.bar-val{font-size:12px;color:#666;width:80px;text-align:right;flex-shrink:0}
+</style>
+</head>
+<body>
+
+<h1>Cashflow overview</h1>
+<div class="sub" id="subheader">Loading...</div>
+
+<div style="margin-bottom:10px">
+  <button class="btn" onclick="loadFromSheet()">Refresh</button>
+  <button class="btn" onclick="useDemoData()">Load demo data</button>
+</div>
+<div class="status" id="statusMsg"></div>
+
+<div class="metrics" id="metricGrid"></div>
+
+<div class="tabs">
+  <div class="tab active" onclick="switchTab('summary',this)">Summary</div>
+  <div class="tab" onclick="switchTab('outflows',this)">Outflows</div>
+  <div class="tab" onclick="switchTab('funds',this)">Funds</div>
+  <div class="tab" onclick="switchTab('chart',this)">Chart</div>
+</div>
+
+<div id="tab-summary"><div class="card"><table id="summaryTable"></table></div></div>
+<div id="tab-outflows" style="display:none"><div class="card"><table id="outflowTable"></table></div></div>
+<div id="tab-funds" style="display:none"><div class="card"><table id="fundTable"></table></div></div>
+<div id="tab-chart" style="display:none">
+  <div class="card">
+    <div style="font-size:12px;font-weight:600;color:#666;text-transform:uppercase;margin-bottom:10px">Surplus / deficit by date</div>
+    <div class="chart-wrap"><canvas id="surplusChart"></canvas></div>
+  </div>
+  <div class="card">
+    <div style="font-size:12px;font-weight:600;color:#666;text-transform:uppercase;margin-bottom:10px">Outflows breakdown</div>
+    <div id="outflowBars"></div>
+  </div>
+</div>
+
+<script src="https://cdnjs.cloudflare.com/ajax/libs/Chart.js/4.4.1/chart.umd.js"></script>
+<script>
+var DATA = {};
+var sChart = null;
+var SHEET_URL = 'https://docs.google.com/spreadsheets/d/135rdYWQBy-uBs6moetfw5IIqgPLToTfYrc8TJP7E7do/export?format=csv&sheet=Sheet1';
+
+function fmtD(s) {
+  if (!s) return '';
+  var d = new Date(s);
+  return isNaN(d) ? s : d.toLocaleDateString('en-GB', {day:'2-digit', month:'short', year:'2-digit'});
+}
+
+function fmtN(v) {
+  if (v === null || v === undefined || v === '') return '—';
+  var n = Number(v);
+  if (isNaN(n)) return v;
+  return (n < 0 ? '-' : '') + Math.abs(n).toLocaleString('en-US', {maximumFractionDigits:0});
+}
+
+function setStatus(m, c) {
+  var e = document.getElementById('statusMsg');
+  e.textContent = m;
+  e.className = 'status ' + (c || '');
+}
+
+async function loadFromSheet() {
+  setStatus('Loading...', '');
+  try {
+    var res = await fetch(SHEET_URL);
+    if (!res.ok) throw new Error('HTTP ' + res.status);
+    var csv = await res.text();
+    var clean = csv.replace(/^"+|"+$/g, '').replace(/""/g, '"');
+    var d = JSON.parse(clean);
+    if (d.error) throw new Error(d.error);
+    DATA = d;
+    var lu = d.lastUpdated ? new Date(d.lastUpdated).toLocaleTimeString() : '';
+    setStatus('Loaded successfully · last updated: ' + lu, 'ok');
+    document.getElementById('subheader').textContent = 'Google Sheets · ' + (DATA.dates || []).length + ' date column(s)';
+    render();
+  } catch(err) {
+    setStatus('Error: ' + err.message, 'err');
+    useDemoData();
+  }
+}
+
+function useDemoData() {
+  DATA = {
+    dates: ['2026-03-31', '2026-04-05'],
+    perDate: [
+      {date:'2026-03-31', totalOutflows:16933468, totalFunds:20382649, buffer:500000, availableFunds:19882649, surplus:-12943807},
+      {date:'2026-04-05', totalOutflows:16933468, totalFunds:24558306, buffer:500000, availableFunds:24058306, surplus:-8768150}
+    ],
+    outflowRows: [
+      {label:'Outstanding Distributions', values:[{date:'2026-03-31',value:129159},{date:'2026-04-05',value:129159}]},
+      {label:'Provisional Distribution Mar 26', values:[{date:'2026-03-31',value:15532730},{date:'2026-04-05',value:15532730}]},
+      {label:'DA-Desk', values:[{date:'2026-03-31',value:250000},{date:'2026-04-05',value:250000}]},
+      {label:'HL', values:[{date:'2026-03-31',value:250000},{date:'2026-04-05',value:250000}]},
+      {label:'SMS Mgmt Fees', values:[{date:'2026-03-31',value:460557},{date:'2026-04-05',value:460557}]},
+      {label:'EUAs Purchase', values:[{date:'2026-03-31',value:200000},{date:'2026-04-05',value:200000}]}
+    ],
+    fundRows: [
+      {label:'Own Cash', values:[{date:'2026-03-31',value:1145273},{date:'2026-04-05',value:5320930}]},
+      {label:'Borrowed Cash (MBL)', values:[{date:'2026-03-31',value:19237376},{date:'2026-04-05',value:19237376}]},
+      {label:'Total Borrowing Base', values:[{date:'2026-03-31',value:22581764},{date:'2026-04-05',value:22581764}]},
+      {label:'Buffer', values:[{date:'2026-03-31',value:500000},{date:'2026-04-05',value:500000}]}
+    ],
+    surplusRow: {label:'Surplus/ Deficit on calculation date', values:[{date:'2026-03-31',value:-12943807},{date:'2026-04-05',value:-8768150}]},
+    lastUpdated: new Date().toISOString()
+  };
+  setStatus('Demo data loaded.', 'ok');
+  document.getElementById('subheader').textContent = 'Demo data · 2 date columns';
+  render();
+}
+
+function render() {
+  buildMetrics();
+  buildSummaryTable();
+  buildOutflowTable();
+  buildFundTable();
+  if (document.getElementById('tab-chart').style.display !== 'none') buildChart();
+}
+
+function uniqueDates() {
+  var seen = {}, out = [];
+  (DATA.dates || []).forEach(function(d) { if (!seen[d]) { seen[d] = true; out.push(d); } });
+  return out;
+}
+
+function byDateMap() {
+  var map = {};
+  (DATA.perDate || []).forEach(function(d) { if (!map[d.date]) map[d.date] = d; });
+  return map;
+}
+
+function firstValPerDate(row, dates) {
+  return dates.map(function(d) {
+    var v = (row.values || []).filter(function(x) { return x.date === d; })[0];
+    return v ? v.value : '';
+  });
+}
+
+function buildMetrics() {
+  var dates = uniqueDates();
+  var bdm = byDateMap();
+  var grid = document.getElementById('metricGrid');
+  grid.innerHTML = '';
+  dates.slice(0, 4).forEach(function(d, i) {
+    var pd = bdm[d];
+    if (!pd) return;
+    var isPos = pd.surplus >= 0;
+    grid.innerHTML += '<div class="metric"><div class="metric-label">' + fmtD(d) + (i === 0 ? ' (calc date)' : '') + '</div>' +
+      '<div class="metric-value ' + (isPos ? 'pos' : 'neg') + '">' + fmtN(pd.surplus) + '</div>' +
+      '<div style="font-size:11px;color:#999;margin-top:4px">Surplus / deficit</div></div>';
+  });
+}
+
+function makeHeader(dates) {
+  return '<thead><tr><th style="text-align:left;min-width:220px">Line item</th>' +
+    dates.map(function(d) { return '<th>' + fmtD(d) + '</th>'; }).join('') + '</tr></thead>';
+}
+
+function makeRow(label, values, cls) {
+  return '<tr' + (cls ? ' class="' + cls + '"' : '') + '><td>' + label + '</td>' +
+    values.map(function(v) {
+      var n = Number(v);
+      var col = (isNaN(n) || n === 0) ? '' : (n < 0 ? 'color:#c0392b' : 'color:#1a7a50');
+      return '<td style="' + col + '">' + fmtN(v) + '</td>';
+    }).join('') + '</tr>';
+}
+
+function buildSummaryTable() {
+  var dates = uniqueDates();
+  var bdm = byDateMap();
+  var b = '<tbody>';
+  b += makeRow('Total outflows', dates.map(function(d) { return bdm[d] ? -bdm[d].totalOutflows : ''; }));
+  b += makeRow('Total funds', dates.map(function(d) { return bdm[d] ? bdm[d].totalFunds : ''; }));
+  b += makeRow('Buffer (deducted)', dates.map(function(d) { return bdm[d] ? -bdm[d].buffer : ''; }));
+  b += makeRow('Available funds', dates.map(function(d) { return bdm[d] ? bdm[d].availableFunds : ''; }));
+  if (DATA.surplusRow) b += makeRow(DATA.surplusRow.label, firstValPerDate(DATA.surplusRow, dates), 'surplus-row');
+  b += '</tbody>';
+  document.getElementById('summaryTable').innerHTML = makeHeader(dates) + b;
+}
+
+function buildOutflowTable() {
+  var dates = uniqueDates();
+  var bdm = byDateMap();
+  var b = '<tbody>';
+  b += makeRow('Outflows (in $)', dates.map(function(d) { return bdm[d] ? -bdm[d].totalOutflows : ''; }), 'section-row');
+  (DATA.outflowRows || []).forEach(function(row) {
+    b += makeRow(row.label, firstValPerDate(row, dates));
+  });
+  b += '</tbody>';
+  document.getElementById('outflowTable').innerHTML = makeHeader(dates) + b;
+}
+
+function buildFundTable() {
+  var dates = uniqueDates();
+  var bdm = byDateMap();
+  var b = '<tbody>';
+  b += makeRow('Funds (in $)', dates.map(function(d) { return bdm[d] ? bdm[d].totalFunds : ''; }), 'section-row');
+  (DATA.fundRows || []).forEach(function(row) {
+    b += makeRow(row.label, firstValPerDate(row, dates));
+  });
+  b += makeRow('Available funds (after buffer)', dates.map(function(d) { return bdm[d] ? bdm[d].availableFunds : ''; }), 'surplus-row');
+  if (DATA.surplusRow) b += makeRow(DATA.surplusRow.label, firstValPerDate(DATA.surplusRow, dates), 'surplus-row');
+  b += '</tbody>';
+  document.getElementById('fundTable').innerHTML = makeHeader(dates) + b;
+}
+
+function buildChart() {
+  if (sChart) sChart.destroy();
+  var dates = uniqueDates();
+  var bdm = byDateMap();
+  var vals = dates.map(function(d) { return bdm[d] ? Math.round(bdm[d].surplus) : 0; });
+  sChart = new Chart(document.getElementById('surplusChart'), {
+    type: 'bar',
+    data: {
+      labels: dates.map(fmtD),
+      datasets: [{data: vals, backgroundColor: vals.map(function(v) { return v >= 0 ? '#1a7a50' : '#c0392b'; }), borderRadius: 3}]
+    },
+    options: {
+      responsive: true, maintainAspectRatio: false,
+      plugins: {legend: {display: false}, tooltip: {callbacks: {label: function(c) { return fmtN(c.raw); }}}},
+      scales: {
+        x: {ticks: {font: {size: 10}}, grid: {display: false}},
+        y: {ticks: {callback: function(v) { return fmtN(v); }, font: {size: 10}}, grid: {color: 'rgba(0,0,0,0.05)'}}
+      }
+    }
+  });
+
+  var firstDate = dates[0];
+  var rows = (DATA.outflowRows || []).filter(function(r) {
+    var v = (r.values || []).filter(function(x) { return x.date === firstDate; })[0];
+    return v && v.value !== 0;
+  }).sort(function(a, b) {
+    var av = (a.values.filter(function(x) { return x.date === firstDate; })[0] || {}).value || 0;
+    var bv = (b.values.filter(function(x) { return x.date === firstDate; })[0] || {}).value || 0;
+    return bv - av;
+  });
+  var maxV = Math.max.apply(null, rows.map(function(r) {
+    return (r.values.filter(function(x) { return x.date === firstDate; })[0] || {}).value || 0;
+  }));
+  document.getElementById('outflowBars').innerHTML = rows.map(function(r) {
+    var v = (r.values.filter(function(x) { return x.date === firstDate; })[0] || {}).value || 0;
+    return '<div class="bar-row"><div class="bar-label" title="' + r.label + '">' + r.label + '</div>' +
+      '<div class="bar-track"><div class="bar-fill" style="width:' + Math.round(v / maxV * 100) + '%;background:#c0392b"></div></div>' +
+      '<div class="bar-val">' + fmtN(v) + '</div></div>';
+  }).join('');
+}
+
+function switchTab(name, el) {
+  ['summary','outflows','funds','chart'].forEach(function(t) {
+    document.getElementById('tab-' + t).style.display = 'none';
+  });
+  document.querySelectorAll('.tab').forEach(function(t) { t.classList.remove('active'); });
+  document.getElementById('tab-' + name).style.display = 'block';
+  el.classList.add('active');
+  if (name === 'chart') buildChart();
+}
+
+window.onload = function() {
+  loadFromSheet();
+  setInterval(loadFromSheet, 60000);
+};
+</script>
+</body>
+</html>
