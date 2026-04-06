@@ -187,6 +187,8 @@ function buildSummaryTable(){
   var b='<tbody>';
   b+=makeRow('Total outflows',dates.map(function(d){return byDate[d]?-byDate[d].totalOutflows:'';}));
   b+=makeRow('Total funds',dates.map(function(d){return byDate[d]?byDate[d].totalFunds:'';}));
+  b+=makeRow('Buffer (deducted)',dates.map(function(d){return byDate[d]?-byDate[d].buffer:'';}));
+  b+=makeRow('Available funds',dates.map(function(d){return byDate[d]?byDate[d].availableFunds:'';}));
   if(DATA.surplusRow)b+=makeRow(DATA.surplusRow.label,firstValPerDate(DATA.surplusRow,dates),'surplus-row');
   b+='</tbody>';
   t.innerHTML=makeHeader(dates)+b;
