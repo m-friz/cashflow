@@ -46,14 +46,8 @@ tr:hover td{background:#fafafa}
 <div class="sub" id="subheader">No data loaded</div>
 
 <div style="margin-bottom:10px">
-  <button class="btn" onclick="document.getElementById('pasteBox').style.display=document.getElementById('pasteBox').style.display==='none'?'block':'none'">Paste JSON ▾</button>
+  <button class="btn" onclick="loadFromSheet()">Refresh</button>
   <button class="btn" onclick="useDemoData()">Load demo data</button>
-</div>
-
-<div id="pasteBox" style="display:none;margin-bottom:16px">
-  <textarea id="jsonInput" placeholder="1. Go to your Cashflow Output Google Sheet&#10;2. Click cell A1&#10;3. Press Ctrl+A then Ctrl+C in the formula bar&#10;4. Click here and press Ctrl+V&#10;5. Click Load below"></textarea>
-  <button class="btn btn-primary" style="margin-top:8px" onclick="loadFromPaste()">Load data</button>
-</div>
 
 <div class="status" id="statusMsg"></div>
 
@@ -83,24 +77,32 @@ tr:hover td{background:#fafafa}
 <script src="https://cdnjs.cloudflare.com/ajax/libs/Chart.js/4.4.1/chart.umd.js"></script>
 <script>
 var DATA={}, sChart=null;
+var SHEET_URL='https://docs.google.com/spreadsheets/d/135rdYWQBy-uBs6moetfw5IIqgPLToTfYrc8TJP7E7do/export?format=csv&sheet=Sheet1';
 
-function fmtD(s){if(!s)return'';var d=new Date(s);return isNaN(d)?s:d.toLocaleDateString('en-GB',{day:'2-digit',month:'short',year:'2-digit'});}
+window.onload=function(){
+  loadFromSheet();
+  setInterval(loadFromSheet, 60000);
+};(s){if(!s)return'';var d=new Date(s);return isNaN(d)?s:d.toLocaleDateString('en-GB',{day:'2-digit',month:'short',year:'2-digit'});}
 function fmtN(v){if(v===null||v===undefined||v==='')return'—';var n=Number(v);if(isNaN(n))return v;return(n<0?'-':'')+Math.abs(n).toLocaleString('en-US',{maximumFractionDigits:0});}
 function setStatus(m,c){var e=document.getElementById('statusMsg');e.textContent=m;e.className='status '+(c||'');}
 
-function loadFromPaste(){
-  var raw=document.getElementById('jsonInput').value.trim();
-  if(!raw){setStatus('Nothing pasted — please paste the JSON from cell A1 first.','err');return;}
+async function loadFromSheet(){
+  setStatus('Loading…','');
   try{
-    var d=JSON.parse(raw);
+    var res=await fetch(SHEET_URL);
+    if(!res.ok)throw new Error('HTTP '+res.status);
+    var csv=await res.text();
+    var clean=csv.replace(/^"+|"+$/g,'').replace(/""/g,'"');
+    var d=JSON.parse(clean);
     if(d.error)throw new Error(d.error);
     DATA=d;
     var lu=d.lastUpdated?new Date(d.lastUpdated).toLocaleTimeString():'';
     setStatus('Loaded successfully · last updated: '+lu,'ok');
     document.getElementById('subheader').textContent='Google Sheets · '+(DATA.dates||[]).length+' date column(s)';
-    document.getElementById('pasteBox').style.display='none';
     render();
-  }catch(err){setStatus('Error: '+err.message+' — make sure you copied the full contents of cell A1','err');}
+  }catch(err){
+    setStatus('Error: '+err.message,'err');
+  }
 }
 
 function useDemoData(){
